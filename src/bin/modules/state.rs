@@ -16,12 +16,16 @@ pub static STATE: SharedState = Mutex::new(State {
             name: "Delay",
             channel: Channel::C1,
             control: Control::new(0),
+            min: 0,
+            max: 127,
             value: 100,
         },
         Attribute {
             name: "Feedback",
             channel: Channel::C1,
             control: Control::new(1),
+            min: 0,
+            max: 100,
             value: 50,
         },
     ],
@@ -49,12 +53,13 @@ pub async fn state_task() {
     }
 }
 
-
 #[derive(Copy, Clone)]
 pub struct Attribute {
     pub name: &'static str,
     pub channel: Channel,
     pub control: Control,
+    pub min: u8,
+    pub max: u8,
     pub value: u8,
 }
 
@@ -66,26 +71,6 @@ pub struct State {
 }
 
 impl State {
-    pub fn new() -> Self {
-        Self {
-            attributes: [
-                Attribute {
-                    name: "Delay",
-                    channel: Channel::C1,
-                    control: Control::new(0),
-                    value: 100,
-                },
-                Attribute {
-                    name: "Feedback Attenuation",
-                    channel: Channel::C1,
-                    control: Control::new(1),
-                    value: 50,
-                },
-            ],
-            selected_option: 0,
-        }
-    }
-
     pub fn attributes(&self) -> Attributes {
         self.attributes.clone()
     }
@@ -96,7 +81,8 @@ impl State {
 
     pub async fn adjust_selected(&mut self, delta: i16) {
         if let Some(attr) = self.attributes.get_mut(self.selected_option) {
-            let new_value = (attr.value as i16 + delta).clamp(0, 127) as u8;
+            let new_value =
+                (attr.value as i16 + delta).clamp(attr.min as i16, attr.max as i16) as u8;
             attr.value = new_value;
 
             info!("{} adjusted to {} ({})", attr.name, attr.value, delta);
