@@ -1,6 +1,6 @@
 use alloc::format;
 use defmt::info;
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use embedded_graphics::{
     mono_font::{MonoTextStyle, ascii::FONT_6X10},
     pixelcolor::BinaryColor,
@@ -31,7 +31,7 @@ pub async fn display_task(sda: GPIO4<'static>, scl: GPIO5<'static>, i2c0: I2C0<'
 
     let interface = I2CDisplayInterface::new(i2c);
 
-    let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate90)
+    let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate270)
         .into_buffered_graphics_mode();
 
     // Log error
@@ -62,7 +62,12 @@ pub async fn display_task(sda: GPIO4<'static>, scl: GPIO5<'static>, i2c0: I2C0<'
 
     info!("Display task started");
 
-    let mut old_value = 0;
+    let mut last_animation_frame = Instant::now();
+
+    // Delay
+    const DELAY_MIN_CIRCLE_SIZE: u32 = 6;
+    let mut delay_circle_size = DELAY_MIN_CIRCLE_SIZE;
+
     loop {
         Timer::after_millis(50).await;
 
@@ -72,21 +77,38 @@ pub async fn display_task(sda: GPIO4<'static>, scl: GPIO5<'static>, i2c0: I2C0<'
         };
 
         let current_attribute = &attributes[selected];
-        if current_attribute.value == old_value {
-            continue;
-        }
-        old_value = current_attribute.value;
 
         // clear display
         display.clear(BinaryColor::Off).unwrap();
 
         match selected {
             0 => {
-                let size = map_range((0, 127), (5, 60), current_attribute.value);
+                let center = Point::new(32, 32);
+                let size = map_range((0, 127), (20, 60), current_attribute.value);
                 Rectangle::with_center(Point::new(32, 32), Size::new(size, size))
                     .into_styled(thin_stroke)
                     .draw(&mut display)
                     .unwrap();
+
+                if current_attribute.value > 0 {
+                    if (Instant::now() - last_animation_frame).as_millis() > 100 {
+                        last_animation_frame = Instant::now();
+                        delay_circle_size += 2;
+                        if delay_circle_size > size - 1 {
+                            delay_circle_size = DELAY_MIN_CIRCLE_SIZE;
+                        }
+                    }
+
+                    Circle::with_center(center, delay_circle_size)
+                        .into_styled(thin_stroke)
+                        .draw(&mut display)
+                        .unwrap();
+
+                    Circle::with_center(center, 2)
+                        .into_styled(fill)
+                        .draw(&mut display)
+                        .unwrap();
+                }
             }
             1 => {
                 let triangle_y_middle = 32;
@@ -162,6 +184,6 @@ fn level_to_arc_count(level: u8) -> usize {
     if level == 0 {
         0
     } else {
-        1 + ((level as u16 * 3) / 127) as usize
+        1 + ((level as u16 * 3) / 100) as usize
     }
 }
