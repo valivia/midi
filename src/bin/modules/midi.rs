@@ -1,22 +1,26 @@
 use core::ptr::addr_of_mut;
 
 use defmt::info;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_time::Timer;
 use esp_hal::otg_fs;
 use esp_hal::peripherals::{GPIO19, GPIO20, USB0};
 use esp_println::println;
 use heapless::Vec;
-use midi_convert::midi_types::{Channel, Control, MidiMessage, Note, Value7};
-use midi_convert::{parse::MidiTryParseSlice, render_slice::MidiRenderSlice};
+use midi_convert::midi_types::MidiMessage;
+use midi_convert::parse::MidiTryParseSlice;
+use midi_convert::render_slice::MidiRenderSlice;
 use usb_device::prelude::*;
 use usbd_midi::{CableNumber, UsbMidiClass, UsbMidiEventPacket, UsbMidiPacketReader};
 
 static mut EP_MEMORY: [u32; 1024] = [0; 1024];
-
-// Size of the used SysEx buffers in bytes.
 const SYSEX_BUFFER_SIZE: usize = 64;
 
+pub static MIDI_QUEUE: Channel<CriticalSectionRawMutex, MidiMessage, 16> = Channel::new();
+
 #[embassy_executor::task]
-pub async fn midi_task(usb0: USB0<'static>, usb_dp: GPIO20<'static>, usb_dm: GPIO19<'static>) {
+pub async fn usb_task(usb0: USB0<'static>, usb_dp: GPIO20<'static>, usb_dm: GPIO19<'static>) {
     let usb_bus_allocator = otg_fs::UsbBus::new(otg_fs::Usb::new(usb0, usb_dp, usb_dm), unsafe {
         &mut *addr_of_mut!(EP_MEMORY)
     });
@@ -30,13 +34,12 @@ pub async fn midi_task(usb0: USB0<'static>, usb_dp: GPIO20<'static>, usb_dm: GPI
         .device_class(0)
         .device_sub_class(0)
         .strings(&[StringDescriptors::default()
-            .manufacturer("Music Company")
-            .product("MIDI Device")
+            .manufacturer("Hoot")
+            .product("Staas MIDI Interface")
             .serial_number("12345678")])
         .unwrap()
         .build();
 
-    // Buffer for received SysEx messages from the host.
     let mut sysex_receive_buffer = Vec::<u8, SYSEX_BUFFER_SIZE>::new();
 
     loop {
@@ -115,25 +118,31 @@ pub async fn midi_task(usb0: USB0<'static>, usb_dp: GPIO20<'static>, usb_dm: GPI
             }
         }
 
-        // Send a message when the button state changes.
-        let mut bytes = [0; 3];
+        // Try to send queued packets
+        while let Ok(message) = MIDI_QUEUE.try_receive() {
+            let mut bytes = [0; 3];
+            message.render_slice(&mut bytes);
+            let packet: UsbMidiEventPacket =
+                UsbMidiEventPacket::try_from_payload_bytes(CableNumber::Cable0, &bytes).unwrap();
 
-        let button_level = false;
-        let message = if button_level {
-            MidiMessage::ControlChange(Channel::C1, Control::new(0), Value7::from(100))
-        } else {
-            MidiMessage::NoteOff(Channel::C1, Note::C3, Value7::from(0))
-        };
+            match midi_class.send_packet(packet) {
+                Ok(_) => {
+                    println!("Sent MIDI packet {:?}", message);
+                }
+                Err(UsbError::WouldBlock) => {
+                    // Put it back and try later
+                    println!("USB busy, will retry sending MIDI packet");
+                    // let _ = MIDI_QUEUE.try_send(message);
+                    break;
+                }
+                Err(_) => {
+                    println!("Error sending MIDI packet");
+                }
+            }
+        }
 
-        message.render_slice(&mut bytes);
-
-        let packet =
-            UsbMidiEventPacket::try_from_payload_bytes(CableNumber::Cable0, &bytes).unwrap();
-
-        // Try to send the packet.
-        // An `UsbError::WouldBlock` is returned if the host has not read previous data.
-        let result = midi_class.send_packet(packet);
-        info!("Send result {:?}", result);
+        // Yield so other async tasks run
+        Timer::after_millis(50).await;
     }
 }
 

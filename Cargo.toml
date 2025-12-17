@@ -39,6 +39,7 @@ display-interface = { version = "0.5.0", features = ["defmt-03"] }
 usbd-midi = "0.5.0"
 usb-device = { version = "0.3.2", features = ["defmt"] }
 midi-convert = "0.2.0"
+embassy-futures = { version = "0.1.2", features = ["defmt"] }
 
 
 [profile.dev]

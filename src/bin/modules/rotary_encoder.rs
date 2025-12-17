@@ -1,7 +1,6 @@
 use core::{cell::RefCell, cmp::min};
 
 use critical_section::Mutex;
-use defmt::info;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch::Watch};
 use embassy_time::Timer;
 use esp_hal::{
@@ -15,6 +14,7 @@ use esp_hal::{
 static UNIT0: Mutex<RefCell<Option<unit::Unit<'static, 1>>>> = Mutex::new(RefCell::new(None));
 
 pub static ROTARY_COUNT: Watch<CriticalSectionRawMutex, i16, 1> = Watch::new();
+pub static ROTARY_DELTA: Watch<CriticalSectionRawMutex, i16, 1> = Watch::new();
 
 #[embassy_executor::task]
 pub async fn rotary_encoder_task(pcnt: PCNT<'static>, s1: AnyPin<'static>, s2: AnyPin<'static>) {
@@ -29,19 +29,21 @@ pub async fn rotary_encoder_task(pcnt: PCNT<'static>, s1: AnyPin<'static>, s2: A
 
     // Pins
     let input_cfg = InputConfig::default().with_pull(Pull::Up);
-    let pin_a = Input::new(s1, input_cfg).peripheral_input();
-    let pin_b = Input::new(s2, input_cfg).peripheral_input();
+    let pin_a = Input::new(s1, input_cfg);
+    let pin_b = Input::new(s2, input_cfg);
+    let input_a = pin_a.peripheral_input();
+    let input_b = pin_b.peripheral_input();
 
     // Set up channels with control and edge signals
     let ch0 = &u0.channel0;
-    ch0.set_ctrl_signal(pin_a.clone());
-    ch0.set_edge_signal(pin_b.clone());
+    ch0.set_ctrl_signal(input_a.clone());
+    ch0.set_edge_signal(input_b.clone());
     ch0.set_ctrl_mode(channel::CtrlMode::Reverse, channel::CtrlMode::Keep);
     ch0.set_input_mode(channel::EdgeMode::Increment, channel::EdgeMode::Decrement);
 
     let ch1 = &u0.channel1;
-    ch1.set_ctrl_signal(pin_a);
-    ch1.set_edge_signal(pin_b);
+    ch1.set_ctrl_signal(input_b);
+    ch1.set_edge_signal(input_a);
     ch1.set_ctrl_mode(channel::CtrlMode::Reverse, channel::CtrlMode::Keep);
     ch1.set_input_mode(channel::EdgeMode::Decrement, channel::EdgeMode::Increment);
 
@@ -53,12 +55,11 @@ pub async fn rotary_encoder_task(pcnt: PCNT<'static>, s1: AnyPin<'static>, s2: A
     critical_section::with(|cs| UNIT0.borrow_ref_mut(cs).replace(u0));
 
     // Monitor counter value and print updates
-    let sender = ROTARY_COUNT.sender();
+    let total_sender = ROTARY_COUNT.sender();
+    let delta_sender = ROTARY_DELTA.sender();
 
     let mut count: u8 = 0;
     let mut last_value: i16 = 0;
-
-    info!("Rotary encoder task started");
 
     loop {
         Timer::after_millis(100).await;
@@ -69,6 +70,7 @@ pub async fn rotary_encoder_task(pcnt: PCNT<'static>, s1: AnyPin<'static>, s2: A
         }
 
         let delta = current_value.wrapping_sub(last_value);
+        delta_sender.send(delta);
         last_value = current_value;
 
         let new_count = saturating_add_custom_range(count, delta, 0, 100);
@@ -78,8 +80,7 @@ pub async fn rotary_encoder_task(pcnt: PCNT<'static>, s1: AnyPin<'static>, s2: A
         }
 
         count = new_count;
-        info!("Count: {}", count);
-        sender.send(count as i16);
+        total_sender.send(count as i16);
     }
 }
 

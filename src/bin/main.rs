@@ -9,15 +9,16 @@
 
 use defmt::info;
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println as _;
 
+use crate::modules::display::display_task;
+use crate::modules::midi::usb_task;
 use crate::modules::rotary_encoder::rotary_encoder_task;
+use crate::modules::state::{BUTTON_PRESSED, state_task};
 
 pub mod modules;
 
@@ -32,8 +33,6 @@ extern crate alloc;
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
-
-static PRESSED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[allow(
     clippy::large_stack_frames,
@@ -54,7 +53,7 @@ async fn main(spawner: Spawner) -> ! {
     info!("Embassy initialized!");
 
     let input_cfg = InputConfig::default().with_pull(Pull::Up);
-    let mut re_key = Input::new(peripherals.GPIO0, input_cfg);
+    let mut re_key = Input::new(peripherals.GPIO18, input_cfg);
 
     spawner
         .spawn(rotary_encoder_task(
@@ -65,19 +64,26 @@ async fn main(spawner: Spawner) -> ! {
         .unwrap();
 
     spawner
-        .spawn(modules::display::display_task(
+        .spawn(display_task(
             peripherals.GPIO4,
             peripherals.GPIO5,
             peripherals.I2C0,
         ))
         .unwrap();
 
+    spawner.spawn(state_task()).unwrap();
+
+    spawner
+        .spawn(usb_task(
+            peripherals.USB0,
+            peripherals.GPIO20,
+            peripherals.GPIO19,
+        ))
+        .unwrap();
+
     loop {
         re_key.wait_for_falling_edge().await;
-        info!("Pressed");
-        PRESSED.signal(());
+        BUTTON_PRESSED.signal(());
         Timer::after_millis(200).await;
     }
-
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v~1.0/examples
 }
