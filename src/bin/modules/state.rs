@@ -4,9 +4,10 @@ use embassy_futures::{
     yield_now,
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal};
+use heapless::{String, format};
 use midi_convert::midi_types::{Channel, Control, MidiMessage, Value7};
 
-use crate::modules::{midi::MIDI_QUEUE, rotary_encoder::ROTARY_DELTA};
+use crate::modules::{display::map_range, midi::MIDI_QUEUE, rotary_encoder::ROTARY_DELTA};
 
 pub type SharedState = Mutex<CriticalSectionRawMutex, State>;
 
@@ -15,18 +16,20 @@ pub static STATE: SharedState = Mutex::new(State {
         Attribute {
             name: "Delay",
             channel: Channel::C1,
-            control: Control::new(0),
+            control: Control::new(20),
             min: 0,
-            max: 127,
-            value: 100,
+            max: 100,
+            value: 15,
+            to_human_readable: |v| format!("{} ms", map_range((0, 100), (0, 1000), v)).unwrap(),
         },
         Attribute {
             name: "Feedback",
             channel: Channel::C1,
-            control: Control::new(1),
+            control: Control::new(21),
             min: 0,
             max: 100,
             value: 50,
+            to_human_readable: |v| format!("{} %", map_range((0, 100), (0, 100), v)).unwrap(),
         },
     ],
     selected_option: 0,
@@ -61,6 +64,7 @@ pub struct Attribute {
     pub min: u8,
     pub max: u8,
     pub value: u8,
+    pub to_human_readable: fn(u8) -> String<32>,
 }
 
 pub type Attributes = [Attribute; 2];

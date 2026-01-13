@@ -164,7 +164,11 @@ pub async fn display_task(sda: GPIO4<'static>, scl: GPIO5<'static>, i2c0: I2C0<'
         // Draw centered text.
         let text_y = 82;
         Text::with_alignment(
-            &format!("{}:\n{}", current_attribute.name, current_attribute.value),
+            &format!(
+                "{}:\n{}",
+                current_attribute.name,
+                (current_attribute.to_human_readable)(current_attribute.value)
+            ),
             Point::new(32, text_y),
             text_default,
             Alignment::Center,
